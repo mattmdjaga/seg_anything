@@ -12,24 +12,27 @@ device = "cuda" if torch.cuda.is_available() else "cpu"
 model = SamModel.from_pretrained("facebook/sam-vit-base").to(device)
 processor = SamProcessor.from_pretrained("facebook/sam-vit-base")
 
-def flip_image(inputs):
-    dots = inputs['mask']
-
-    gray = cv2.cvtColor(dots, cv2.COLOR_RGB2GRAY)
-    ret, thresh = cv2.threshold(gray, 127, 255, 0)
+def mask_2_dots(mask):
+    gray = cv2.cvtColor(mask, cv2.COLOR_RGB2GRAY)
+    _, thresh = cv2.threshold(gray, 127, 255, 0)
     kernel = np.ones((5,5),np.uint8)
     closed = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel)
-    contours, hierarchy = cv2.findContours(closed, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
+    contours, _ = cv2.findContours(closed, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
     points = []
     for contour in contours:
         moments = cv2.moments(contour)
         cx = int(moments['m10']/moments['m00'])
         cy = int(moments['m01']/moments['m00'])
         points.append([cx, cy])
-    points = [points]
+    return [points]
+
+def main_func(inputs):
+    dots = inputs['mask']
+    points = mask_2_dots(dots)
+
     image_input = inputs['image']
     image_input = Image.fromarray(image_input)
-    #points = [[[550, 600], [2100,1000]]]
+
     inputs = processor(image_input, input_points=points, return_tensors="pt").to(device)
     # Forward pass
     outputs = model(**inputs)
@@ -51,11 +54,16 @@ def flip_image(inputs):
     for i in range(mask.shape[2]):
         #mask[:,:,i] = mask[:,:,i] * scores[0][i].item()
         pred_masks.append(Image.fromarray((mask[:,:,i] * 255).astype(np.uint8)))
+
     return pred_masks
 
 
 with gr.Blocks() as demo:
-    gr.Markdown("# Demo to run Segment Anything")
+    gr.Markdown("# Demo to run Segment Anything base model")
+    gr.Markdown("""This app uses the [Segment Anything](https://huggingface.co/facebook/sam-vit-base) model from Meta to get a mask from a points in an image.
+    Currently it only works for creating dots for one object. But, I'm planning to add extra features to make it work for multiple objects.
+    The output shows the image with the dots then the 3 predicted masks.
+    """)
     with gr.Tab("Flip Image"):
         with gr.Row():
             image_input = gr.Image(tool='sketch')
@@ -63,6 +71,6 @@ with gr.Blocks() as demo:
         
         image_button = gr.Button("Segment Image")
 
-    image_button.click(flip_image, inputs=image_input, outputs=image_output)
+    image_button.click(main_func, inputs=image_input, outputs=image_output)
 
 demo.launch()
